@@ -17,7 +17,6 @@
 package org.vertx.mods;
 
 import com.mongodb.*;
-import com.mongodb.util.JSON;
 import org.vertx.java.busmods.BusModBase;
 import org.vertx.java.core.Handler;
 import org.vertx.java.core.eventbus.Message;
@@ -479,18 +478,18 @@ public class MongoPersistor extends BusModBase implements Handler<Message<JsonOb
     private void runCommand(Message<JsonObject> message) {
         JsonObject reply = new JsonObject();
 
-        String command = getMandatoryString("command", message);
+        JsonObject command = message.body().getObject("command");
 
         if (command == null) {
             return;
         }
 
-        DBObject commandObject = (DBObject) JSON.parse(command);
+        DBObject commandObject = jsonToDBObject(command);
         CommandResult result = db.command(commandObject);
-
         reply.putObject("result", new JsonObject(result.toMap()));
         sendOK(message, reply);
     }
+
 
     private DBObject jsonToDBObject(JsonObject object) {
         return new BasicDBObject(object.toMap());
