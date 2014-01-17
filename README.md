@@ -1,5 +1,11 @@
 # MongoDB Persistor
 
+# Personal Explanation
+
+This repo has modifications to original mod-mongo-persistor for my personal requirements. Changes may be backward-incompatible. 
+
+# Original Description
+
 This module allows data to be saved, retrieved, searched for, and deleted in a MongoDB instance. MongoDB is a great match
 for persisting vert.x data since it natively handles JSON (BSON) documents.
 
