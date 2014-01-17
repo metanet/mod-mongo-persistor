@@ -164,6 +164,11 @@ public class MongoPersistor extends BusModBase implements Handler<Message<JsonOb
                 case "command":
                     runCommand(message);
                     break;
+                case "findmulti":
+                case "find_multi":
+                case "findMulti":
+                    doFindMulti(message);
+                    break;
                 default:
                     sendError(message, "Invalid action: " + action);
             }
@@ -269,9 +274,10 @@ public class MongoPersistor extends BusModBase implements Handler<Message<JsonOb
         DBCollection coll = db.getCollection(collection);
         DBCursor cursor;
         if (matcher != null) {
+            final DBObject matcherDbObject = jsonToDBObject(matcher);
             cursor = (keys == null) ?
-                    coll.find(jsonToDBObject(matcher)) :
-                    coll.find(jsonToDBObject(matcher), jsonToDBObject(keys));
+                    coll.find(matcherDbObject) :
+                    coll.find(matcherDbObject, jsonToDBObject(keys));
         } else {
             cursor = coll.find();
         }
@@ -322,8 +328,7 @@ public class MongoPersistor extends BusModBase implements Handler<Message<JsonOb
         int count = 0;
         JsonArray results = new JsonArray();
         while (cursor.hasNext() && count < max) {
-            DBObject obj = cursor.next();
-            JsonObject m = new JsonObject(obj.toMap());
+            JsonObject m = dbObjectToJsonObject(cursor.next());
             results.add(m);
             count++;
         }
@@ -383,7 +388,7 @@ public class MongoPersistor extends BusModBase implements Handler<Message<JsonOb
         }
         JsonObject reply = new JsonObject();
         if (res != null) {
-            JsonObject m = new JsonObject(res.toMap());
+            JsonObject m = dbObjectToJsonObject(res);
             reply.putObject("result", m);
         }
         sendOK(message, reply);
@@ -470,7 +475,7 @@ public class MongoPersistor extends BusModBase implements Handler<Message<JsonOb
         CommandResult stats = coll.getStats();
 
         JsonObject reply = new JsonObject();
-        reply.putObject("stats", new JsonObject(stats.toMap()));
+        reply.putObject("stats", dbObjectToJsonObject(stats));
         sendOK(message, reply);
 
     }
@@ -486,10 +491,92 @@ public class MongoPersistor extends BusModBase implements Handler<Message<JsonOb
 
         DBObject commandObject = jsonToDBObject(command);
         CommandResult result = db.command(commandObject);
-        reply.putObject("result", new JsonObject(result.toMap()));
+        reply.putObject("result", dbObjectToJsonObject(result));
         sendOK(message, reply);
     }
 
+    private void doFindMulti(Message<JsonObject> message) {
+        final JsonArray results = new JsonArray();
+
+        for (Object findObj : message.body().getArray("finds")) {
+            if (findObj instanceof JsonObject) {
+                final JsonObject find = (JsonObject) findObj;
+                final JsonObject result = doFindWithoutBatch(find);
+                results.add(result);
+            } else {
+                final JsonObject error = new JsonObject();
+                error.putString("status", "err");
+                error.putString("message", "Invalid find command. Each find command must be JsonObject.");
+                results.add(error);
+            }
+        }
+
+        sendOK(message, new JsonObject().putArray("results", results));
+    }
+
+    private JsonObject doFindWithoutBatch(JsonObject find) {
+        String collection = find.getString("collection");
+        if (collection == null) {
+            return new JsonObject().putString("status", "err").putString("message", "collection must be specified");
+        }
+        Integer limit = (Integer) find.getNumber("limit");
+        if (limit == null) {
+            limit = 100;
+        } else if (limit > 100) {
+            return new JsonObject().putString("status", "err").putString("message", "Take it easy, dude! Limit can not be greater than 100.");
+        }
+        Integer skip = (Integer) find.getNumber("skip");
+        if (skip == null) {
+            skip = -1;
+        }
+
+        JsonObject matcher = find.getObject("matcher");
+        JsonObject keys = find.getObject("keys");
+
+        Object hint = find.getField("hint");
+        Object sort = find.getField("sort");
+        DBCollection coll = db.getCollection(collection);
+        DBCursor cursor;
+        if (matcher != null) {
+            cursor = (keys == null) ?
+                    coll.find(jsonToDBObject(matcher)) :
+                    coll.find(jsonToDBObject(matcher), jsonToDBObject(keys));
+        } else {
+            cursor = coll.find();
+        }
+        if (skip != -1) {
+            cursor.skip(skip);
+        }
+        if (limit != -1) {
+            cursor.limit(limit);
+        }
+        if (sort != null) {
+            cursor.sort(sortObjectToDBObject(sort));
+        }
+        if (hint != null) {
+            if (hint instanceof JsonObject) {
+                cursor.hint(jsonToDBObject((JsonObject) hint));
+            } else if (hint instanceof String) {
+                cursor.hint((String) hint);
+            } else {
+                return new JsonObject().putString("status", "err").putString("message", "Cannot handle type " + hint.getClass().getSimpleName() + " for hint");
+            }
+        }
+
+        final JsonArray results = new JsonArray();
+        while (cursor.hasNext()) {
+            JsonObject m = dbObjectToJsonObject(cursor.next());
+            results.add(m);
+        }
+
+        cursor.close();
+
+        return createBatchMessage("ok", results);
+    }
+
+    private JsonObject dbObjectToJsonObject(DBObject obj) {
+        return new JsonObject(obj.toMap());
+    }
 
     private DBObject jsonToDBObject(JsonObject object) {
         return new BasicDBObject(object.toMap());
